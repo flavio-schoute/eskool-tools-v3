@@ -35,4 +35,8 @@ return [
         ],
     ],
 
+    'plug_and_pay' => [
+        'token' => env('PLUG_AND_PAY_TOKEN'),
+    ],
+
 ];
