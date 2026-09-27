@@ -14,7 +14,7 @@ use PlugAndPay\Sdk\Filters\OrderFilter;
 use PlugAndPay\Sdk\Service\Client;
 use PlugAndPay\Sdk\Support\Parameters;
 
-class PlugAndPayService
+final class PlugAndPayService
 {
     public const PER_PAGE = 25;
 
@@ -57,6 +57,29 @@ class PlugAndPayService
             'orders' => $all,
             'perPage' => self::PER_PAGE,
         ];
+    }
+
+    /**
+     * Haalt betaalde orders op en geeft per order het bedrag (ex btw) en betaaldatum terug.
+     *
+     * @return array<int, array{amount: float, paidAt: string}>
+     */
+    public function paidOrders(): array
+    {
+        $rows = $this->fetchAll(
+            (new OrderFilter)->paymentStatus(PaymentStatus::PAID)
+        );
+
+        return array_map(function (array $row) {
+            /** @var Order $order */
+            $order = $row['order'];
+            $paidAt = $order->payment()->paidAt()?->format('Y-m-d') ?? $row['invoiceDate'];
+
+            return [
+                'amount' => $order->amount(),
+                'paidAt' => $paidAt,
+            ];
+        }, $rows);
     }
 
     /**
