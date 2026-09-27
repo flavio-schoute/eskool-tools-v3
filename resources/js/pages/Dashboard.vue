@@ -6,14 +6,14 @@ import { dashboard } from '@/routes';
 import invoices from '@/routes/invoices/index';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
-type InvoiceStat = {
+type TransactionStat = {
+    type: 'chargeback' | 'refund';
     amount: number;
-    status: 'open' | 'reversed' | null;
-    invoiceDate: string;
+    date: string;
 };
 
-type InvoiceStatsPayload = {
-    invoices: InvoiceStat[];
+type TransactionStatsPayload = {
+    transactions: TransactionStat[];
 } | null;
 
 type Payment = {
@@ -34,7 +34,7 @@ type Greeting = {
 // ── Props ─────────────────────────────────────────────────────────────────────
 const props = defineProps<{
     greeting: Greeting;
-    invoiceStats: InvoiceStatsPayload;
+    transactionStats: TransactionStatsPayload;
     cashStats: CashStatsPayload;
 }>();
 
@@ -98,38 +98,25 @@ const presets: { key: Preset; label: string }[] = [
 ];
 
 // ── Computed stats ─────────────────────────────────────────────────────────────
-const filteredInvoices = computed<InvoiceStat[]>(() => {
-    if (!props.invoiceStats) return [];
+const filteredTransactions = computed<TransactionStat[]>(() => {
+    if (!props.transactionStats) return [];
     const { from, to } = dateRange.value;
-    return props.invoiceStats.invoices.filter((inv) => {
-        if (from && inv.invoiceDate < from) return false;
-        if (to && inv.invoiceDate > to) return false;
+    return props.transactionStats.transactions.filter((transaction) => {
+        if (from && transaction.date < from) return false;
+        if (to && transaction.date > to) return false;
         return true;
     });
 });
 
-const openInvoices = computed(() => filteredInvoices.value.filter((i) => i.status === 'open'));
-const reversedInvoices = computed(() => filteredInvoices.value.filter((i) => i.status === 'reversed'));
+const refunds = computed(() => filteredTransactions.value.filter((t) => t.type === 'refund'));
+const chargebacks = computed(() => filteredTransactions.value.filter((t) => t.type === 'chargeback'));
 
-const openAmount = computed(() => openInvoices.value.reduce((s, i) => s + i.amount, 0));
-const reversedAmount = computed(() => reversedInvoices.value.reduce((s, i) => s + i.amount, 0));
-const totalOutstanding = computed(() => openAmount.value + reversedAmount.value);
-const unpaidOrReversedCount = computed(() => openInvoices.value.length + reversedInvoices.value.length);
-const avgInvoiceAmount = computed(() =>
-    unpaidOrReversedCount.value ? totalOutstanding.value / unpaidOrReversedCount.value : 0,
+const refundAmount = computed(() => refunds.value.reduce((s, t) => s + t.amount, 0));
+const chargebackAmount = computed(() => chargebacks.value.reduce((s, t) => s + t.amount, 0));
+const totalLost = computed(() => refundAmount.value + chargebackAmount.value);
+const avgTransactionAmount = computed(() =>
+    filteredTransactions.value.length ? totalLost.value / filteredTransactions.value.length : 0,
 );
-
-const oldestOpenDays = computed(() => {
-    if (!openInvoices.value.length) return null;
-    const oldest = openInvoices.value.reduce((a, b) => (a.invoiceDate < b.invoiceDate ? a : b));
-    const diff = Math.floor((Date.now() - new Date(oldest.invoiceDate).getTime()) / 86_400_000);
-    return diff;
-});
-
-const criticalInvoices = computed(() => {
-    const cutoff = toISO(new Date(Date.now() - 30 * 86_400_000));
-    return openInvoices.value.filter((i) => i.invoiceDate < cutoff).length;
-});
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function formatCurrency(amount: number): string {
@@ -183,7 +170,7 @@ const totalPipeline = computed(() => pipeline.reduce((s, p) => s + p.count, 0));
         <div class="flex flex-wrap items-center justify-between gap-3">
             <div>
                 <h1 class="text-xl font-semibold">Dashboard</h1>
-                <p class="text-muted-foreground text-sm">Overzicht debiteurenbeheer &amp; openstaande facturen</p>
+                <p class="text-muted-foreground text-sm">Overzicht debiteurenbeheer, chargebacks &amp; refunds</p>
             </div>
 
             <!-- Period filter -->
@@ -236,23 +223,23 @@ const totalPipeline = computed(() => pipeline.reduce((s, p) => s + p.count, 0));
                 </div>
                 <div class="opacity-30">
                     <div class="text-2xl font-bold text-green-700 dark:text-green-400">€ –</div>
-                    <div class="mt-0.5 text-xs text-green-600/70 dark:text-green-500">betalingen (ex. btw)</div>
+                    <div class="mt-0.5 text-xs text-green-600/70 dark:text-green-500">betalingen (incl. btw)</div>
                 </div>
             </div>
 
-            <!-- Openstaand -->
+            <!-- Refunds -->
             <div class="relative overflow-hidden rounded-2xl border border-sidebar-border/70 bg-gradient-to-br from-orange-50 to-amber-50 p-5 dark:border-sidebar-border dark:from-orange-950/30 dark:to-amber-950/30">
                 <div class="mb-3 flex items-center justify-between">
-                    <span class="text-sm font-medium text-orange-700 dark:text-orange-400">Openstaand</span>
+                    <span class="text-sm font-medium text-orange-700 dark:text-orange-400">Refunds</span>
                     <div class="flex h-8 w-8 items-center justify-center rounded-full bg-orange-100 dark:bg-orange-900/50">
                         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" class="h-4 w-4 text-orange-600 dark:text-orange-400">
                             <path fill-rule="evenodd" d="M4 4a2 2 0 0 0-2 2v4a2 2 0 0 0 2 2V6h10a2 2 0 0 0-2-2H4Zm2 6a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v4a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2v-4Zm6 4a2 2 0 1 0 0-4 2 2 0 0 0 0 4Z" clip-rule="evenodd" />
                         </svg>
                     </div>
                 </div>
-                <template v-if="invoiceStats">
-                    <div class="text-2xl font-bold text-orange-700 dark:text-orange-400">{{ formatCurrency(openAmount) }}</div>
-                    <div class="mt-0.5 text-xs text-orange-600/70 dark:text-orange-500">{{ openInvoices.length }} {{ openInvoices.length === 1 ? 'factuur' : 'facturen' }}</div>
+                <template v-if="transactionStats">
+                    <div class="text-2xl font-bold text-orange-700 dark:text-orange-400">{{ formatCurrency(refundAmount) }}</div>
+                    <div class="mt-0.5 text-xs text-orange-600/70 dark:text-orange-500">{{ refunds.length }} {{ refunds.length === 1 ? 'refund' : 'refunds' }}</div>
                 </template>
                 <template v-else>
                     <div class="h-8 w-28 animate-pulse rounded-md bg-orange-100 dark:bg-orange-900/40" />
@@ -260,19 +247,19 @@ const totalPipeline = computed(() => pipeline.reduce((s, p) => s + p.count, 0));
                 </template>
             </div>
 
-            <!-- Gestorneerd -->
+            <!-- Chargebacks -->
             <div class="relative overflow-hidden rounded-2xl border border-sidebar-border/70 bg-gradient-to-br from-red-50 to-rose-50 p-5 dark:border-sidebar-border dark:from-red-950/30 dark:to-rose-950/30">
                 <div class="mb-3 flex items-center justify-between">
-                    <span class="text-sm font-medium text-red-700 dark:text-red-400">Gestorneerd</span>
+                    <span class="text-sm font-medium text-red-700 dark:text-red-400">Chargebacks</span>
                     <div class="flex h-8 w-8 items-center justify-center rounded-full bg-red-100 dark:bg-red-900/50">
                         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" class="h-4 w-4 text-red-600 dark:text-red-400">
                             <path fill-rule="evenodd" d="M8.485 2.495c.673-1.167 2.357-1.167 3.03 0l6.28 10.875c.673 1.167-.17 2.625-1.516 2.625H3.72c-1.347 0-2.189-1.458-1.515-2.625L8.485 2.495ZM10 5a.75.75 0 0 1 .75.75v3.5a.75.75 0 0 1-1.5 0v-3.5A.75.75 0 0 1 10 5Zm0 9a1 1 0 1 0 0-2 1 1 0 0 0 0 2Z" clip-rule="evenodd" />
                         </svg>
                     </div>
                 </div>
-                <template v-if="invoiceStats">
-                    <div class="text-2xl font-bold text-red-700 dark:text-red-400">{{ formatCurrency(reversedAmount) }}</div>
-                    <div class="mt-0.5 text-xs text-red-600/70 dark:text-red-500">{{ reversedInvoices.length }} {{ reversedInvoices.length === 1 ? 'chargeback' : 'chargebacks' }}</div>
+                <template v-if="transactionStats">
+                    <div class="text-2xl font-bold text-red-700 dark:text-red-400">{{ formatCurrency(chargebackAmount) }}</div>
+                    <div class="mt-0.5 text-xs text-red-600/70 dark:text-red-500">{{ chargebacks.length }} {{ chargebacks.length === 1 ? 'chargeback' : 'chargebacks' }}</div>
                 </template>
                 <template v-else>
                     <div class="h-8 w-28 animate-pulse rounded-md bg-red-100 dark:bg-red-900/40" />
@@ -280,19 +267,19 @@ const totalPipeline = computed(() => pipeline.reduce((s, p) => s + p.count, 0));
                 </template>
             </div>
 
-            <!-- Totaal uitstaand -->
+            <!-- Totaal chargebacks & refunds -->
             <div class="relative overflow-hidden rounded-2xl border border-sidebar-border/70 bg-gradient-to-br from-blue-50 to-indigo-50 p-5 dark:border-sidebar-border dark:from-blue-950/30 dark:to-indigo-950/30">
                 <div class="mb-3 flex items-center justify-between">
-                    <span class="text-sm font-medium text-blue-700 dark:text-blue-400">Totaal uitstaand</span>
+                    <span class="text-sm font-medium text-blue-700 dark:text-blue-400">Totaal teruggeboekt</span>
                     <div class="flex h-8 w-8 items-center justify-center rounded-full bg-blue-100 dark:bg-blue-900/50">
                         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" class="h-4 w-4 text-blue-600 dark:text-blue-400">
                             <path d="M15.98 1.804a1 1 0 0 0-1.96 0l-.24 1.192a1 1 0 0 1-.784.785l-1.192.24a1 1 0 0 0 0 1.962l1.192.24a1 1 0 0 1 .785.785l.24 1.192a1 1 0 0 0 1.962 0l.24-1.192a1 1 0 0 1 .785-.785l1.192-.24a1 1 0 0 0 0-1.962l-1.192-.24a1 1 0 0 1-.785-.785l-.24-1.192ZM6.949 5.684a1 1 0 0 0-1.898 0l-.683 2.051a1 1 0 0 1-.633.633l-2.051.683a1 1 0 0 0 0 1.898l2.051.684a1 1 0 0 1 .633.632l.683 2.051a1 1 0 0 0 1.898 0l.683-2.051a1 1 0 0 1 .633-.633l2.051-.683a1 1 0 0 0 0-1.898l-2.051-.683a1 1 0 0 1-.633-.633L6.95 5.684ZM13.949 13.684a1 1 0 0 0-1.898 0l-.184.551a1 1 0 0 1-.632.633l-.551.183a1 1 0 0 0 0 1.898l.551.183a1 1 0 0 1 .633.633l.183.551a1 1 0 0 0 1.898 0l.184-.551a1 1 0 0 1 .632-.633l.551-.183a1 1 0 0 0 0-1.898l-.551-.184a1 1 0 0 1-.633-.632l-.183-.551Z" />
                         </svg>
                     </div>
                 </div>
-                <template v-if="invoiceStats">
-                    <div class="text-2xl font-bold text-blue-700 dark:text-blue-400">{{ formatCurrency(totalOutstanding) }}</div>
-                    <div class="mt-0.5 text-xs text-blue-600/70 dark:text-blue-500">{{ filteredInvoices.length }} {{ filteredInvoices.length === 1 ? 'factuur' : 'facturen' }} totaal</div>
+                <template v-if="transactionStats">
+                    <div class="text-2xl font-bold text-blue-700 dark:text-blue-400">{{ formatCurrency(totalLost) }}</div>
+                    <div class="mt-0.5 text-xs text-blue-600/70 dark:text-blue-500">{{ filteredTransactions.length }} {{ filteredTransactions.length === 1 ? 'transactie' : 'transacties' }} totaal</div>
                 </template>
                 <template v-else>
                     <div class="h-8 w-28 animate-pulse rounded-md bg-blue-100 dark:bg-blue-900/40" />
@@ -312,7 +299,7 @@ const totalPipeline = computed(() => pipeline.reduce((s, p) => s + p.count, 0));
                     :href="invoices.index().url"
                     class="text-muted-foreground hover:text-foreground inline-flex items-center gap-1 text-sm transition-colors"
                 >
-                    Alle facturen
+                    Alle chargebacks &amp; refunds
                     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor" class="h-3.5 w-3.5">
                         <path fill-rule="evenodd" d="M6.22 4.22a.75.75 0 0 1 1.06 0l3.25 3.25a.75.75 0 0 1 0 1.06l-3.25 3.25a.75.75 0 0 1-1.06-1.06L8.94 8 6.22 5.28a.75.75 0 0 1 0-1.06Z" clip-rule="evenodd" />
                     </svg>
@@ -355,18 +342,18 @@ const totalPipeline = computed(() => pipeline.reduce((s, p) => s + p.count, 0));
         <!-- ── Extra inzichten ─────────────────────────────────────────────── -->
         <div class="grid gap-4 sm:grid-cols-3">
 
-            <!-- Gem. factuurwaarde -->
+            <!-- Gem. bedrag -->
             <div class="rounded-2xl border border-sidebar-border/70 p-5 dark:border-sidebar-border">
                 <div class="mb-1 flex items-center gap-2">
                     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" class="text-muted-foreground h-4 w-4">
                         <path d="M13.024 9.25c.47 0 .827-.433.637-.863a4 4 0 0 0-4.094-2.364c-.468.05-.665.576-.43.984l1.08 1.868a.75.75 0 0 0 .649.375h2.158ZM7.84 7.758c-.236-.408-.79-.5-1.068-.12A3.982 3.982 0 0 0 6 10c0 .884.287 1.7.772 2.363.278.38.832.287 1.068-.12l1.078-1.868a.75.75 0 0 0 0-.75L7.839 7.758ZM9.138 12.993c-.235.408-.039.934.43.984a4 4 0 0 0 4.094-2.364c.19-.43-.168-.863-.638-.863h-2.158a.75.75 0 0 0-.65.375l-1.078 1.868Z" />
                         <path fill-rule="evenodd" d="M14.13 4.347A8 8 0 1 1 5.87 15.653 8 8 0 0 1 14.13 4.347Zm-1.168 1.154a6.5 6.5 0 1 0-5.924 11 6.5 6.5 0 0 0 5.924-11Z" clip-rule="evenodd" />
                     </svg>
-                    <span class="text-muted-foreground text-sm font-medium">Gem. factuurwaarde</span>
+                    <span class="text-muted-foreground text-sm font-medium">Gem. bedrag</span>
                 </div>
-                <template v-if="invoiceStats">
-                    <div class="text-2xl font-bold">{{ filteredInvoices.length ? formatCurrency(avgInvoiceAmount) : '—' }}</div>
-                    <p class="text-muted-foreground mt-0.5 text-xs">per openstaande / gestorneerde factuur (ex. btw)</p>
+                <template v-if="transactionStats">
+                    <div class="text-2xl font-bold">{{ filteredTransactions.length ? formatCurrency(avgTransactionAmount) : '—' }}</div>
+                    <p class="text-muted-foreground mt-0.5 text-xs">per chargeback / refund (incl. btw)</p>
                 </template>
                 <template v-else>
                     <div class="mt-2 h-7 w-32 animate-pulse rounded-md bg-sidebar-accent" />

@@ -5,37 +5,38 @@ import DateRangePicker from '@/components/DateRangePicker.vue';
 import { index as invoicesIndex } from '@/routes/invoices/index';
 import { dashboard } from '@/routes';
 
-type Invoice = {
-    id: number;
-    invoiceNumber: string | null;
-    customerName: string;
-    email: string;
-    company: string | null;
-    address: string;
+type Transaction = {
+    id: string;
+    type: 'chargeback' | 'refund';
+    paymentId: string;
+    description: string | null;
+    customerName: string | null;
+    email: string | null;
     amount: number;
-    paymentStatus: 'open' | 'reversed' | null;
+    currency: string;
+    reason: string | null;
+    status: string | null;
     paymentMethod: string | null;
-    paymentUrl: string | null;
-    invoiceDate: string;
-    plugAndPayUrl: string;
+    date: string;
+    dashboardUrl: string | null;
 };
 
 const props = defineProps<{
-    invoices: Invoice[];
+    transactions: Transaction[];
 }>();
 
 defineOptions({
     layout: {
         breadcrumbs: [
             { title: 'Dashboard', href: dashboard() },
-            { title: 'Openstaande facturen', href: invoicesIndex().url },
+            { title: 'Chargebacks & refunds', href: invoicesIndex().url },
         ],
     },
 });
 
 // ── Filters ──────────────────────────────────────────────────────────────────
 const search = ref('');
-const statusFilter = ref<'all' | 'open' | 'reversed'>('all');
+const typeFilter = ref<'all' | Transaction['type']>('all');
 const amountSort = ref<'asc' | 'desc' | null>(null);
 const dateSort = ref<'asc' | 'desc' | null>(null);
 const dateRange = ref({ from: '', to: '' });
@@ -43,9 +44,9 @@ const page = ref(1);
 const perPage = 25;
 
 // Modal
-const activeInvoice = ref<Invoice | null>(null);
-function openModal(invoice: Invoice) { activeInvoice.value = invoice; }
-function closeModal() { activeInvoice.value = null; }
+const activeTransaction = ref<Transaction | null>(null);
+function openModal(transaction: Transaction) { activeTransaction.value = transaction; }
+function closeModal() { activeTransaction.value = null; }
 
 function toggleAmountSort() {
     amountSort.value = amountSort.value === 'asc' ? 'desc' : amountSort.value === 'desc' ? null : 'asc';
@@ -59,8 +60,8 @@ function toggleDateSort() {
     page.value = 1;
 }
 
-function setStatus(value: typeof statusFilter.value) {
-    statusFilter.value = value;
+function setType(value: typeof typeFilter.value) {
+    typeFilter.value = value;
     page.value = 1;
 }
 
@@ -71,25 +72,25 @@ watch(dateRange, () => { page.value = 1; }, { deep: true });
 
 // ── Derived list ──────────────────────────────────────────────────────────────
 const filtered = computed(() => {
-    let list = props.invoices;
+    let list = props.transactions;
 
-    if (statusFilter.value !== 'all') {
-        list = list.filter((i) => i.paymentStatus === statusFilter.value);
+    if (typeFilter.value !== 'all') {
+        list = list.filter((t) => t.type === typeFilter.value);
     }
 
     if (search.value.trim()) {
         const q = search.value.trim().toLowerCase();
         list = list.filter(
-            (i) => i.customerName.toLowerCase().includes(q) || i.email.toLowerCase().includes(q),
+            (t) => [t.customerName, t.email, t.description, t.paymentId].some((value) => value?.toLowerCase().includes(q)),
         );
     }
 
     if (dateRange.value.from) {
-        list = list.filter((i) => i.invoiceDate >= dateRange.value.from);
+        list = list.filter((t) => t.date >= dateRange.value.from);
     }
 
     if (dateRange.value.to) {
-        list = list.filter((i) => i.invoiceDate <= dateRange.value.to);
+        list = list.filter((t) => t.date <= dateRange.value.to);
     }
 
     if (amountSort.value) {
@@ -99,8 +100,8 @@ const filtered = computed(() => {
     } else if (dateSort.value) {
         list = [...list].sort((a, b) =>
             dateSort.value === 'asc'
-                ? a.invoiceDate.localeCompare(b.invoiceDate)
-                : b.invoiceDate.localeCompare(a.invoiceDate),
+                ? a.date.localeCompare(b.date)
+                : b.date.localeCompare(a.date),
         );
     }
 
@@ -136,18 +137,28 @@ const pageNumbers = computed(() => {
 });
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
-function formatAmount(amount: number): string {
-    return new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'EUR' }).format(amount);
+function formatAmount(amount: number, currency = 'EUR'): string {
+    return new Intl.NumberFormat('nl-NL', { style: 'currency', currency }).format(amount);
 }
+
+const typeLabels: Record<Transaction['type'], string> = {
+    chargeback: 'Chargeback',
+    refund: 'Refund',
+};
+
+const typeClasses: Record<Transaction['type'], string> = {
+    chargeback: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400',
+    refund: 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400',
+};
 </script>
 
 <template>
-    <Head title="Openstaande facturen" />
+    <Head title="Chargebacks & refunds" />
 
     <div class="flex flex-col gap-6 p-4">
         <div>
-            <h1 class="text-xl font-semibold">Openstaande facturen</h1>
-            <p class="text-muted-foreground text-sm">Gestorneerde en onbetaalde facturen uit Plug &amp; Pay.</p>
+            <h1 class="text-xl font-semibold">Chargebacks &amp; refunds</h1>
+            <p class="text-muted-foreground text-sm">Chargebacks en terugbetalingen uit Mollie.</p>
         </div>
 
         <!-- Toolbar -->
@@ -160,7 +171,7 @@ function formatAmount(amount: number): string {
                 <input
                     v-model="search"
                     type="search"
-                    placeholder="Zoek op naam of e-mail…"
+                    placeholder="Zoek op naam, e-mail of omschrijving…"
                     class="w-64 rounded-lg border border-sidebar-border/70 bg-transparent py-2 pl-9 pr-3 text-sm outline-none placeholder:text-muted-foreground focus:border-sidebar-border focus:ring-1 focus:ring-sidebar-border dark:border-sidebar-border"
                     @input="onSearch"
                 />
@@ -171,16 +182,16 @@ function formatAmount(amount: number): string {
                 <button
                     v-for="opt in [
                         { value: 'all', label: 'Alles' },
-                        { value: 'open', label: 'Onbetaald' },
-                        { value: 'reversed', label: 'Gestorneerd' },
+                        { value: 'chargeback', label: 'Chargebacks' },
+                        { value: 'refund', label: 'Refunds' },
                     ]"
                     :key="opt.value"
                     type="button"
                     class="rounded-md px-3 py-1.5 text-sm font-medium transition-colors"
-                    :class="statusFilter === opt.value
+                    :class="typeFilter === opt.value
                         ? 'bg-sidebar-accent text-foreground'
                         : 'text-muted-foreground hover:text-foreground'"
-                    @click="setStatus(opt.value as any)"
+                    @click="setType(opt.value as any)"
                 >
                     {{ opt.label }}
                 </button>
@@ -191,7 +202,7 @@ function formatAmount(amount: number): string {
 
             <!-- Teller -->
             <span class="text-muted-foreground ml-auto text-sm">
-                {{ filtered.length }} {{ filtered.length === 1 ? 'factuur' : 'facturen' }}
+                {{ filtered.length }} {{ filtered.length === 1 ? 'transactie' : 'transacties' }}
             </span>
         </div>
 
@@ -199,7 +210,7 @@ function formatAmount(amount: number): string {
             <table class="w-full text-sm">
                 <thead>
                     <tr class="border-b border-sidebar-border/70 text-left dark:border-sidebar-border">
-                        <th class="px-4 py-3 font-medium">Factuurnummer</th>
+                        <th class="px-4 py-3 font-medium">Omschrijving</th>
                         <th class="px-4 py-3 font-medium">Klant</th>
                         <th class="px-4 py-3 font-medium">E-mail</th>
                         <th class="px-4 py-3 font-medium">
@@ -209,7 +220,7 @@ function formatAmount(amount: number): string {
                                 :class="amountSort ? 'text-foreground' : 'text-muted-foreground hover:text-foreground'"
                                 @click="toggleAmountSort"
                             >
-                                Bedrag (ex. btw)
+                                Bedrag
                                 <span class="flex flex-col gap-px leading-none">
                                     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 8 5" class="h-2 w-2" fill="currentColor" :class="amountSort === 'asc' ? 'opacity-100' : 'opacity-25'">
                                         <path d="M4 0 8 5H0z" />
@@ -220,7 +231,7 @@ function formatAmount(amount: number): string {
                                 </span>
                             </button>
                         </th>
-                        <th class="px-4 py-3 font-medium">Status</th>
+                        <th class="px-4 py-3 font-medium">Type</th>
                         <th class="px-4 py-3 font-medium">
                             <button
                                 type="button"
@@ -228,7 +239,7 @@ function formatAmount(amount: number): string {
                                 :class="dateSort ? 'text-foreground' : 'text-muted-foreground hover:text-foreground'"
                                 @click="toggleDateSort"
                             >
-                                Factuurdatum
+                                Datum
                                 <span class="flex flex-col gap-px leading-none">
                                     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 8 5" class="h-2 w-2" fill="currentColor" :class="dateSort === 'asc' ? 'opacity-100' : 'opacity-25'">
                                         <path d="M4 0 8 5H0z" />
@@ -244,20 +255,20 @@ function formatAmount(amount: number): string {
                 </thead>
                 <tbody>
                     <tr v-if="paginated.length === 0">
-                        <td colspan="7" class="text-muted-foreground px-4 py-8 text-center">Geen facturen gevonden.</td>
+                        <td colspan="7" class="text-muted-foreground px-4 py-8 text-center">Geen chargebacks of refunds gevonden.</td>
                     </tr>
                     <tr
-                        v-for="invoice in paginated"
-                        :key="invoice.id"
+                        v-for="transaction in paginated"
+                        :key="transaction.id"
                         class="border-b border-sidebar-border/70 last:border-0 dark:border-sidebar-border"
                     >
-                        <td class="px-4 py-3 font-mono">
+                        <td class="px-4 py-3">
                             <div class="flex items-center gap-1.5">
                                 <button
                                     type="button"
                                     class="text-muted-foreground hover:text-foreground flex-shrink-0 transition-colors"
-                                    :aria-label="'Details van ' + (invoice.invoiceNumber ?? invoice.id)"
-                                    @click="openModal(invoice)"
+                                    :aria-label="'Details van ' + transaction.id"
+                                    @click="openModal(transaction)"
                                 >
                                     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
                                         <circle cx="8" cy="8" r="6.5" />
@@ -265,38 +276,37 @@ function formatAmount(amount: number): string {
                                     </svg>
                                 </button>
                                 <a
-                                    :href="invoice.plugAndPayUrl"
+                                    v-if="transaction.dashboardUrl"
+                                    :href="transaction.dashboardUrl"
                                     target="_blank"
                                     rel="noopener noreferrer"
                                     class="group inline-flex items-start gap-0.5 transition-colors hover:text-blue-600 dark:hover:text-blue-400"
                                 >
-                                    <span>{{ invoice.invoiceNumber ?? '—' }}</span>
+                                    <span>{{ transaction.description ?? transaction.paymentId }}</span>
                                     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 12 12" class="mt-0.5 h-2.5 w-2.5 shrink-0 opacity-40 transition-opacity group-hover:opacity-100" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
                                         <path d="M4.5 1.5H2a.5.5 0 0 0-.5.5v8a.5.5 0 0 0 .5.5h8a.5.5 0 0 0 .5-.5V7.5M7 1.5h3.5m0 0v3.5m0-3.5L4.5 7" />
                                     </svg>
                                 </a>
+                                <span v-else>{{ transaction.description ?? transaction.paymentId }}</span>
                             </div>
                         </td>
-                        <td class="px-4 py-3">{{ invoice.customerName }}</td>
-                        <td class="px-4 py-3 text-muted-foreground">{{ invoice.email }}</td>
-                        <td class="px-4 py-3 tabular-nums">{{ formatAmount(invoice.amount) }}</td>
+                        <td class="px-4 py-3">{{ transaction.customerName ?? '—' }}</td>
+                        <td class="px-4 py-3 text-muted-foreground">{{ transaction.email ?? '—' }}</td>
+                        <td class="px-4 py-3 tabular-nums">{{ formatAmount(transaction.amount, transaction.currency) }}</td>
                         <td class="px-4 py-3">
                             <span
                                 class="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium"
-                                :class="{
-                                    'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400': invoice.paymentStatus === 'open',
-                                    'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400': invoice.paymentStatus === 'reversed',
-                                }"
+                                :class="typeClasses[transaction.type]"
                             >
-                                {{ invoice.paymentStatus === 'open' ? 'Onbetaald' : 'Gestorneerd' }}
+                                {{ typeLabels[transaction.type] }}
                             </span>
                         </td>
-                        <td class="text-muted-foreground px-4 py-3">{{ invoice.invoiceDate }}</td>
+                        <td class="text-muted-foreground px-4 py-3">{{ transaction.date }}</td>
                         <td class="px-4 py-3">
                             <button
                                 type="button"
                                 class="inline-flex items-center rounded-lg border border-sidebar-border/70 px-3 py-1.5 text-sm font-medium transition-colors hover:bg-sidebar-accent dark:border-sidebar-border"
-                                @click="openModal(invoice)"
+                                @click="openModal(transaction)"
                             >
                                 Actie starten
                             </button>
@@ -351,14 +361,14 @@ function formatAmount(amount: number): string {
     <!-- Modal -->
     <Teleport defer to="body">
         <Transition enter-active-class="transition duration-200 ease-out" enter-from-class="opacity-0" enter-to-class="opacity-100" leave-active-class="transition duration-150 ease-in" leave-from-class="opacity-100" leave-to-class="opacity-0">
-            <div v-if="activeInvoice" class="fixed inset-0 z-50 flex items-center justify-center p-4" @click.self="closeModal">
+            <div v-if="activeTransaction" class="fixed inset-0 z-50 flex items-center justify-center p-4" @click.self="closeModal">
                 <div class="fixed inset-0 bg-black/50" @click="closeModal" />
 
                 <div class="relative z-10 w-full max-w-lg rounded-xl border border-sidebar-border bg-background shadow-xl dark:border-sidebar-border">
                     <div class="flex items-center justify-between border-b border-sidebar-border/70 px-6 py-4 dark:border-sidebar-border">
                         <div>
-                            <h2 class="text-base font-semibold">{{ activeInvoice.invoiceNumber ?? 'Factuur #' + activeInvoice.id }}</h2>
-                            <p class="text-muted-foreground text-xs">{{ activeInvoice.invoiceDate }}</p>
+                            <h2 class="text-base font-semibold">{{ activeTransaction.description ?? activeTransaction.paymentId }}</h2>
+                            <p class="text-muted-foreground text-xs">{{ activeTransaction.date }}</p>
                         </div>
                         <button type="button" class="text-muted-foreground hover:text-foreground transition-colors" aria-label="Sluiten" @click="closeModal">
                             <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" class="h-5 w-5">
@@ -370,12 +380,9 @@ function formatAmount(amount: number): string {
                     <div class="space-y-5 px-6 py-5">
                         <span
                             class="inline-flex items-center rounded-full px-2.5 py-1 text-xs font-medium"
-                            :class="{
-                                'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400': activeInvoice.paymentStatus === 'open',
-                                'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400': activeInvoice.paymentStatus === 'reversed',
-                            }"
+                            :class="typeClasses[activeTransaction.type]"
                         >
-                            {{ activeInvoice.paymentStatus === 'open' ? 'Onbetaald' : 'Gestorneerd' }}
+                            {{ typeLabels[activeTransaction.type] }}
                         </span>
 
                         <div>
@@ -383,57 +390,50 @@ function formatAmount(amount: number): string {
                             <dl class="space-y-1.5 text-sm">
                                 <div class="flex justify-between gap-4">
                                     <dt class="text-muted-foreground">Naam</dt>
-                                    <dd class="font-medium">{{ activeInvoice.customerName }}</dd>
+                                    <dd class="font-medium">{{ activeTransaction.customerName ?? '—' }}</dd>
                                 </div>
-                                <div v-if="activeInvoice.company" class="flex justify-between gap-4">
-                                    <dt class="text-muted-foreground">Bedrijf</dt>
-                                    <dd class="font-medium">{{ activeInvoice.company }}</dd>
-                                </div>
-                                <div class="flex justify-between gap-4">
+                                <div v-if="activeTransaction.email" class="flex justify-between gap-4">
                                     <dt class="text-muted-foreground">E-mail</dt>
-                                    <dd><a :href="'mailto:' + activeInvoice.email" class="text-blue-600 hover:underline dark:text-blue-400">{{ activeInvoice.email }}</a></dd>
-                                </div>
-                                <div v-if="activeInvoice.address" class="flex justify-between gap-4">
-                                    <dt class="text-muted-foreground">Adres</dt>
-                                    <dd class="text-right font-medium">{{ activeInvoice.address }}</dd>
+                                    <dd><a :href="'mailto:' + activeTransaction.email" class="text-blue-600 hover:underline dark:text-blue-400">{{ activeTransaction.email }}</a></dd>
                                 </div>
                             </dl>
                         </div>
 
                         <div>
-                            <h3 class="text-muted-foreground mb-2 text-xs font-medium uppercase tracking-wide">Factuur</h3>
+                            <h3 class="text-muted-foreground mb-2 text-xs font-medium uppercase tracking-wide">{{ typeLabels[activeTransaction.type] }}</h3>
                             <dl class="space-y-1.5 text-sm">
                                 <div class="flex justify-between gap-4">
-                                    <dt class="text-muted-foreground">Bedrag (ex. btw)</dt>
-                                    <dd class="font-medium tabular-nums">{{ formatAmount(activeInvoice.amount) }}</dd>
+                                    <dt class="text-muted-foreground">Bedrag</dt>
+                                    <dd class="font-medium tabular-nums">{{ formatAmount(activeTransaction.amount, activeTransaction.currency) }}</dd>
                                 </div>
-                                <div v-if="activeInvoice.paymentMethod" class="flex justify-between gap-4">
+                                <div v-if="activeTransaction.reason" class="flex justify-between gap-4">
+                                    <dt class="text-muted-foreground">Reden</dt>
+                                    <dd class="text-right font-medium">{{ activeTransaction.reason }}</dd>
+                                </div>
+                                <div v-if="activeTransaction.status" class="flex justify-between gap-4">
+                                    <dt class="text-muted-foreground">Status</dt>
+                                    <dd class="font-medium capitalize">{{ activeTransaction.status }}</dd>
+                                </div>
+                                <div class="flex justify-between gap-4">
+                                    <dt class="text-muted-foreground">Betaling</dt>
+                                    <dd class="font-mono font-medium">{{ activeTransaction.paymentId }}</dd>
+                                </div>
+                                <div v-if="activeTransaction.paymentMethod" class="flex justify-between gap-4">
                                     <dt class="text-muted-foreground">Betaalmethode</dt>
-                                    <dd class="font-medium capitalize">{{ activeInvoice.paymentMethod }}</dd>
+                                    <dd class="font-medium capitalize">{{ activeTransaction.paymentMethod }}</dd>
                                 </div>
                             </dl>
-                        </div>
-
-                        <div v-if="activeInvoice.paymentUrl">
-                            <h3 class="text-muted-foreground mb-2 text-xs font-medium uppercase tracking-wide">Betaallink</h3>
-                            <div class="flex items-center gap-2 rounded-lg border border-sidebar-border/70 bg-sidebar-accent/30 px-3 py-2 dark:border-sidebar-border">
-                                <span class="text-muted-foreground min-w-0 flex-1 truncate font-mono text-xs">{{ activeInvoice.paymentUrl }}</span>
-                                <a :href="activeInvoice.paymentUrl" target="_blank" rel="noopener noreferrer" class="text-muted-foreground hover:text-foreground flex-shrink-0 transition-colors" aria-label="Betaallink openen">
-                                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 12 12" class="h-3.5 w-3.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-                                        <path d="M4.5 1.5H2a.5.5 0 0 0-.5.5v8a.5.5 0 0 0 .5.5h8a.5.5 0 0 0 .5-.5V7.5M7 1.5h3.5m0 0v3.5m0-3.5L4.5 7" />
-                                    </svg>
-                                </a>
-                            </div>
                         </div>
                     </div>
 
                     <div class="flex items-center justify-between border-t border-sidebar-border/70 px-6 py-4 dark:border-sidebar-border">
-                        <a :href="activeInvoice.plugAndPayUrl" target="_blank" rel="noopener noreferrer" class="text-muted-foreground hover:text-foreground inline-flex items-center gap-1.5 text-sm transition-colors">
-                            Bekijk in Plug &amp; Pay
+                        <a v-if="activeTransaction.dashboardUrl" :href="activeTransaction.dashboardUrl" target="_blank" rel="noopener noreferrer" class="text-muted-foreground hover:text-foreground inline-flex items-center gap-1.5 text-sm transition-colors">
+                            Bekijk in Mollie
                             <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 12 12" class="h-3 w-3" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
                                 <path d="M4.5 1.5H2a.5.5 0 0 0-.5.5v8a.5.5 0 0 0 .5.5h8a.5.5 0 0 0 .5-.5V7.5M7 1.5h3.5m0 0v3.5m0-3.5L4.5 7" />
                             </svg>
                         </a>
+                        <span v-else />
                         <button type="button" class="inline-flex items-center rounded-lg bg-foreground px-4 py-2 text-sm font-medium text-background transition-opacity hover:opacity-80">
                             Actie starten
                         </button>

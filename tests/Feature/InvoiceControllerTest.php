@@ -1,100 +1,124 @@
 <?php
 
+declare(strict_types=1);
+
 use App\Models\User;
-use App\Services\PlugAndPayService;
-use PlugAndPay\Sdk\Director\BodyTo\BodyToOrder;
-use PlugAndPay\Sdk\Entity\Order;
+use Mollie\Api\Fake\MockResponse;
+use Mollie\Api\Http\PendingRequest;
+use Mollie\Api\Http\Requests\GetPaginatedChargebacksRequest;
+use Mollie\Api\Http\Requests\GetPaginatedRefundsRequest;
+use Mollie\Api\Resources\ChargebackCollection;
+use Mollie\Api\Resources\RefundCollection;
+use Mollie\Laravel\Facades\Mollie;
 
 beforeEach(function () {
     $this->user = User::factory()->create();
 });
 
-function makeOrder(array $overrides = []): Order
+function molliePayment(array $overrides = []): array
 {
-    return BodyToOrder::build(array_merge([
-        'id' => 1,
-        'invoice_number' => '2024-001',
-        'invoice_status' => 'final',
+    return array_merge([
+        'resource' => 'payment',
+        'id' => 'tr_123',
         'mode' => 'live',
-        'source' => 'api',
-        'reference' => 'ref-1',
-        'amount' => '89.25',
-        'amount_with_tax' => '99.99',
-        'is_first' => false,
-        'is_hidden' => false,
-        'created_at' => '2024-01-15 12:00:00',
-        'updated_at' => '2024-01-15 12:00:00',
-        'deleted_at' => null,
-        'billing' => [
-            'address' => [
-                'city' => 'Amsterdam',
-                'country' => 'NL',
-                'street' => 'Teststraat',
-                'housenumber' => '1',
-                'zipcode' => '1000AA',
-            ],
-            'contact' => [
-                'email' => 'jan@example.com',
-                'firstname' => 'Jan',
-                'lastname' => 'Jansen',
-                'tax_exempt' => 'none',
-            ],
+        'createdAt' => '2024-01-10T12:00:00+00:00',
+        'amount' => ['value' => '99.99', 'currency' => 'EUR'],
+        'description' => 'Factuur 2024-001',
+        'method' => 'ideal',
+        'status' => 'paid',
+        'billingEmail' => 'jan@example.com',
+        'details' => ['consumerName' => 'Jan Jansen'],
+        '_links' => [
+            'dashboard' => ['href' => 'https://my.mollie.com/dashboard/org_1/payments/tr_123', 'type' => 'text/html'],
         ],
-        'payment' => [
-            'status' => 'open',
-        ],
-    ], $overrides));
+    ], $overrides);
 }
 
-function makeRow(array $orderOverrides = [], string $invoiceDate = '2024-01-15'): array
+function mollieChargeback(array $overrides = []): array
 {
-    return [
-        'order' => makeOrder($orderOverrides),
-        'invoiceDate' => $invoiceDate,
-    ];
+    return array_merge([
+        'resource' => 'chargeback',
+        'id' => 'chb_123',
+        'amount' => ['value' => '99.99', 'currency' => 'EUR'],
+        'createdAt' => '2024-01-15T12:00:00+00:00',
+        'paymentId' => 'tr_123',
+        'reason' => ['code' => 'AC04', 'description' => 'Account closed'],
+        'reversedAt' => null,
+        '_embedded' => ['payment' => molliePayment()],
+    ], $overrides);
 }
 
-/**
- * @param  array<int, array{order: Order, invoiceDate: string}>  $rows
- */
-function mockService(array $rows): void
+function mollieRefund(array $overrides = []): array
 {
-    $mock = Mockery::mock(PlugAndPayService::class);
-    $mock->shouldReceive('unpaidAndReversedOrders')
-        ->once()
-        ->andReturn(['orders' => $rows, 'perPage' => 25]);
-    app()->instance(PlugAndPayService::class, $mock);
+    return array_merge([
+        'resource' => 'refund',
+        'id' => 're_123',
+        'mode' => 'live',
+        'amount' => ['value' => '25.00', 'currency' => 'EUR'],
+        'createdAt' => '2024-01-20T12:00:00+00:00',
+        'description' => 'Gedeeltelijke terugbetaling',
+        'paymentId' => 'tr_456',
+        'status' => 'refunded',
+        '_embedded' => ['payment' => molliePayment(['id' => 'tr_456', 'details' => null, 'billingEmail' => null])],
+    ], $overrides);
 }
 
-it('renders the invoices page with all invoices as props', function () {
-    mockService([makeRow()]);
+function fakeMollie(array $chargebacks = [], array $refunds = []): void
+{
+    Mollie::fake([
+        GetPaginatedChargebacksRequest::class => MockResponse::list(ChargebackCollection::class)->addMany($chargebacks)->create(),
+        GetPaginatedRefundsRequest::class => MockResponse::list(RefundCollection::class)->addMany($refunds)->create(),
+    ]);
+}
+
+it('renders chargebacks and refunds from mollie', function () {
+    fakeMollie([mollieChargeback()], [mollieRefund()]);
 
     $this->actingAs($this->user)
         ->get(route('invoices.index'))
         ->assertInertia(
             fn ($page) => $page
                 ->component('invoices/Index')
-                ->has('invoices', 1)
-                ->where('invoices.0.id', 1)
-                ->where('invoices.0.invoiceNumber', '2024-001')
-                ->where('invoices.0.customerName', 'Jan Jansen')
-                ->where('invoices.0.email', 'jan@example.com')
-                ->where('invoices.0.amount', 89.25)
-                ->where('invoices.0.paymentStatus', 'open')
-                ->where('invoices.0.invoiceDate', '2024-01-15')
-                ->has('invoices.0.plugAndPayUrl')
-                ->has('invoices.0.paymentUrl')
-                ->has('invoices.0.company')
-                ->has('invoices.0.address')
+                ->has('transactions', 2)
+                ->where('transactions.0.id', 're_123')
+                ->where('transactions.0.type', 'refund')
+                ->where('transactions.0.amount', 25)
+                ->where('transactions.0.reason', 'Gedeeltelijke terugbetaling')
+                ->where('transactions.0.status', 'refunded')
+                ->where('transactions.0.customerName', null)
+                ->where('transactions.0.date', '2024-01-20')
+                ->where('transactions.1.id', 'chb_123')
+                ->where('transactions.1.type', 'chargeback')
+                ->where('transactions.1.paymentId', 'tr_123')
+                ->where('transactions.1.description', 'Factuur 2024-001')
+                ->where('transactions.1.customerName', 'Jan Jansen')
+                ->where('transactions.1.email', 'jan@example.com')
+                ->where('transactions.1.amount', 99.99)
+                ->where('transactions.1.currency', 'EUR')
+                ->where('transactions.1.reason', 'Account closed')
+                ->where('transactions.1.paymentMethod', 'ideal')
+                ->where('transactions.1.date', '2024-01-15')
+                ->where('transactions.1.dashboardUrl', 'https://my.mollie.com/dashboard/org_1/payments/tr_123')
         );
 });
 
-it('passes all invoices without server-side filtering or pagination', function () {
-    mockService([makeRow(['id' => 1]), makeRow(['id' => 2]), makeRow(['id' => 3])]);
+it('embeds the payment when fetching chargebacks and refunds', function () {
+    fakeMollie();
+
+    $this->actingAs($this->user)->get(route('invoices.index'))->assertOk();
+
+    Mollie::assertSent(fn (PendingRequest $request) => $request->getRequest() instanceof GetPaginatedChargebacksRequest
+        && $request->query()->get('embed') === 'payment');
+    Mollie::assertSent(fn (PendingRequest $request) => $request->getRequest() instanceof GetPaginatedRefundsRequest
+        && $request->query()->get('embed') === 'payment');
+});
+
+it('marks reversed chargebacks', function () {
+    fakeMollie([mollieChargeback(['reversedAt' => '2024-02-01T12:00:00+00:00'])]);
 
     $this->actingAs($this->user)
         ->get(route('invoices.index'))
-        ->assertInertia(fn ($page) => $page->has('invoices', 3));
+        ->assertInertia(fn ($page) => $page->where('transactions.0.status', 'reversed'));
 });
 
 it('redirects guests to the login page', function () {
